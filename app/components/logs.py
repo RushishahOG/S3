@@ -19,7 +19,7 @@ from datetime import datetime
 
 import streamlit as st
 
-from core.config import settings
+from core.config.settings import settings
 
 # Absolute path of the backend log file (mirrors logging_config.configure_logging).
 LOG_PATH = os.path.join(settings.logging.log_abs_dir, "platform.log")

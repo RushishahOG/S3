@@ -14,7 +14,7 @@ import os
 import pandas as pd
 
 from app.explorer.base import DATASET_SOURCES, DatasetSource, HealthIssue, Severity
-from core.config import settings
+from core.config.settings import settings
 from core.data.cache.cache_manager import CacheManager
 from core.data.providers.base_provider import PriceColumns
 from core.data.storage.storage_manager import StorageManager

@@ -11,7 +11,7 @@ import os
 import sys
 import warnings
 
-from core.config import settings
+from core.config.settings import settings
 from core.utils.paths import ensure_dir
 
 _CONFIGURED = False

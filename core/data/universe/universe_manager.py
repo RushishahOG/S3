@@ -12,7 +12,7 @@ without touching downstream code.
 
 from __future__ import annotations
 
-from core.config import settings
+from core.config.settings import settings
 from core.data.universe.base_universe import BaseUniverseProvider, Universe
 from core.utils.logging_config import get_logger
 

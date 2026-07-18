@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from core.config import settings
+from core.config.settings import settings
 
 TD_PER_YEAR = settings.features.trading_days_per_year
 

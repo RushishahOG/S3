@@ -19,7 +19,7 @@ from typing import Iterable
 import duckdb
 import pandas as pd
 
-from core.config import settings
+from core.config.settings import settings
 from core.data.providers.base_provider import PriceColumns
 from core.utils.logging_config import get_logger
 from core.utils.paths import ensure_dir

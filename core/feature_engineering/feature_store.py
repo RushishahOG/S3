@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import duckdb
 import pandas as pd
 
-from core.config import settings
+from core.config.settings import settings
 
 
 @dataclass

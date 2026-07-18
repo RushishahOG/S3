@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from app.services import get_storage
-from core.config import settings
+from core.config.settings import settings
 from core.data.providers.registry import available_providers
 
 PAGES = [

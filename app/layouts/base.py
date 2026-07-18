@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from core.config import settings
+from core.config.settings import settings
 
 
 def page_header(title: str, subtitle: str = "") -> None:

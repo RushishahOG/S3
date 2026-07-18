@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from core.config import settings
+from core.config.settings import settings
 from core.data.cache.cache_manager import CacheManager
 from core.data.ingestion.downloader import HistoricalDownloader
 from core.data.ingestion.reports import DownloadReport

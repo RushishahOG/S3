@@ -17,7 +17,7 @@ from app.components.logs import render_log_panel
 from app.layouts.base import page_header, section
 from app.services import get_market_data_manager, get_storage
 from app.pages import eligibility_analyzer, universe_explorer
-from core.config import settings
+from core.config.settings import settings
 from core.data.providers.registry import available_providers
 from core.utils.dates import MAX_BACKTEST_DATE
 from core.utils.dates import date_range_business

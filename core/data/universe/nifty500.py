@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 
-from core.config import settings
+from core.config.settings import settings
 from core.data.ingestion.constituents import Constituent, load_constituents
 from core.data.ingestion.ticker_resolver import TickerResolver
 from core.data.universe.base_universe import BaseUniverseProvider

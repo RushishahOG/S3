@@ -17,7 +17,7 @@ from typing import Sequence
 
 import pandas as pd
 
-from core.config import settings
+from core.config.settings import settings
 from core.data.providers.base_provider import BaseDataProvider, PriceColumns
 from core.utils.decorators import retry
 from core.utils.logging_config import get_logger

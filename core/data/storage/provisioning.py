@@ -27,7 +27,7 @@ import gzip
 import os
 import tempfile
 
-from core.config import settings
+from core.config.settings import settings
 from core.utils.logging_config import get_logger
 from core.utils.paths import ensure_dir
 

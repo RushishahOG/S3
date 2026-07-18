@@ -32,7 +32,7 @@ APIFY_API_BASE = "https://api.apify.com/v2/acts"
 
 
 def _cache_dir() -> str:
-    from core.config import settings
+    from core.config.settings import settings
 
     return os.path.join(settings.storage.parquet_abs_dir, "..", "raw", "apify")
 

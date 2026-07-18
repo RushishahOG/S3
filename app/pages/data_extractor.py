@@ -22,7 +22,7 @@ import streamlit as st
 from app.components.logs import render_log_panel
 from app.layouts.base import page_header, section
 from app.services import get_market_data_manager, get_storage, get_universe_manager
-from core.config import settings
+from core.config.settings import settings
 from core.config.providers_config import is_provider_enabled, providers_config
 from core.data.ingestion.screener_downloader import ScreenerDownloader, ScreenerJob
 from core.data.providers.apify_screener_provider import ApifyScreenerProvider

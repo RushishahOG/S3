@@ -20,7 +20,7 @@ from typing import Iterable
 
 import pandas as pd
 
-from core.config import settings
+from core.config.settings import settings
 from core.data.ingestion.constituents import Constituent
 from core.data.ingestion.reports import DownloadReport, TickerReport
 from core.data.ingestion.ticker_resolver import TickerResolver

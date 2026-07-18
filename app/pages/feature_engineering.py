@@ -15,7 +15,7 @@ import streamlit as st
 from app.components.logs import render_log_panel
 from app.layouts.base import page_header, section
 from app.services import get_storage
-from core.config import settings
+from core.config.settings import settings
 from core.data.storage.storage_manager import StorageManager
 from core.feature_engineering.return_engine import (
     compute_all_returns,
