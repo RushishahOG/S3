@@ -1,0 +1,104 @@
+# ============================================================================
+# Smart Beta Research Platform - Application Configuration
+# ----------------------------------------------------------------------------
+# All runtime constants live here so downstream modules never hardcode values.
+# Future providers / universes / factors can be enabled by editing this file
+# (or by supplying a custom config path) without touching source code.
+# ============================================================================
+
+app:
+  name: "Smart Beta Research Platform"
+  version: "1.0.0"
+  environment: "research"
+
+storage:
+  # Local analytical store. DuckDB is the preferred engine for V1.
+  engine: "duckdb"
+  # Database file lives under the workspace storage/ directory.
+  database_path: "storage/market_data.duckdb"
+  # Parquet is used as a portable cache/export format alongside DuckDB.
+  parquet_dir: "storage/parquet"
+  # Raw price table name in the analytical store.
+  prices_table: "prices"
+  # Wide feature store table name.
+  feature_store_table: "feature_store"
+  # Metadata / audit table for the feature store.
+  feature_metadata_table: "feature_metadata"
+
+providers:
+  # Default provider used by the Market Data Manager.
+  default: "yahoo_finance"
+  # Each provider is registered by key in core/data/providers/registry.py.
+  available:
+    - "yahoo_finance"
+  # If a vendor omits the adjusted-close series, fall back to the raw close
+  # price so return-based factors (Momentum, cumulative returns, backtests)
+  # still have a series. Disable to store NULL and surface a warning instead.
+  adj_close_fallback: true
+
+universe:
+  # Version 1 supports a single investment universe: NIFTY 500.
+  # The generic UniverseManager abstraction is retained so future versions can
+  # register additional providers (NIFTY 50, Midcap 150, custom CSVs, ETFs, ...)
+  # without architectural change.
+  config_dir: "config/universe"
+  default: "nifty500"
+  # Benchmark used for Beta calculations and market-relative features.
+  benchmark: "NIFTY_500"
+  # Official NIFTY 500 constituent file (read at runtime - not hardcoded).
+  constituents_file: "nifty_500_constituents/ind_nifty500list_2026.csv"
+
+features:
+  # Trading-day convention. Indian market ~252 trading days / year.
+  trading_days_per_year: 252
+  # Default history window (years) fetched when no explicit range is given.
+  default_history_years: 5
+  # Minimum observations required to trust a rolling statistic.
+  min_observations: 20
+
+momentum:
+  # Lookback horizons (in months) implemented in V1.
+  horizons_months: [3, 6, 9, 12]
+  # Lag applied to the 12M variant (in months) for the *_LAG column.
+  lag_months: 1
+  # Whether to emit z-score scaled variants (MOM_*_SCALED).
+  scaled: true
+
+low_volatility:
+  # Rolling volatility windows (in months) implemented in V1.
+  vol_windows_months: [6, 12, 24, 36, 48]
+  # Semi-deviation window (months) for the SEMI_* column.
+  semi_dev_window_months: 12
+  # Beta estimation windows (months). Beta is computed for every horizon in
+  # this list so the factor is available at 3/6/9/12 month lookbacks.
+  beta_windows_months: [3, 6, 9, 12]
+
+# ---------------------------------------------------------------------------
+# Competition backtesting window (global constraint).
+# The maximum permissible period is 2006-01-01 .. 2026-05-31. The end date is
+# FIXED and non-configurable; the user may only choose a start on/after the
+# minimum. Change these values here if competition rules change - no code edits
+# elsewhere are required.
+# ---------------------------------------------------------------------------
+ingestion:
+  # TickerResolver external alias mapping (base symbol -> Yahoo symbol).
+  ticker_mapping_file: "config/ticker_mapping.yaml"
+  # Production-grade reliability defaults.
+  retries: 3
+  retry_backoff_seconds: 2.0
+  min_delay_seconds: 0.2
+  max_delay_seconds: 0.6
+  # Where per-ticker CSV exports and report CSVs are written.
+  export_dir: "storage/exports"
+
+backtest:
+  min_date: "2006-01-01"
+  max_date: "2026-05-31"
+  default_start: "2006-01-01"
+
+logging:
+  level: "INFO"
+  log_format: "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+  # When true, logs are also written to storage/logs/platform.log
+  to_file: true
+  log_dir: "storage/logs"

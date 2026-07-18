@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# DuckDB / storage (large files)
+storage/*.duckdb
+storage/*.duckdb.wal
+storage/*.duckdb.part
+storage/*.gz
+storage/*.duckdb.gz
+storage/market_data_copy.duckdb
+storage/exports/
+storage/parquet/
+storage/logs/
+storage/raw/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Logs
+*.log
+
+# Temp files
+_*.py

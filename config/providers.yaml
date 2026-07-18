@@ -1,0 +1,31 @@
+# ============================================================================
+# Provider Configuration (Smart Beta Research Platform)
+# ----------------------------------------------------------------------------
+# External data vendors are configured here, NEVER hardcoded in source code.
+# Secrets are referenced via ${ENV_VAR} and resolved from the environment
+# (loaded from the project-root .env file). The API token is NEVER written
+# into this file or any Python source.
+#
+# Edit this file to enable/disable providers or tune reliability knobs; no
+# application code change is required.
+# ============================================================================
+
+providers:
+
+  apify:
+    enabled: true
+    # Resolved from the APIFY_API_TOKEN environment variable (see .env).
+    api_token: ${APIFY_API_TOKEN}
+    retry_attempts: 3
+    retry_backoff_seconds: 5
+    timeout_seconds: 120
+    batch_size: 25
+    max_concurrency: 3
+    cache_raw_response: true
+
+    actors:
+      screener:
+        # Single source of truth for ALL fundamental data (financial statements,
+        # balance sheet, cash flow, dividends, ratios, company metadata). Returns
+        # the complete financial history for a given screener.in company URL.
+        id: "XargjiJ7dQUj2q2Bx"
