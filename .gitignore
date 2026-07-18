@@ -32,6 +32,10 @@ storage/raw/
 .DS_Store
 Thumbs.db
 
+# Secrets / env
+.env
+.env.*
+
 # Streamlit
 .streamlit/secrets.toml
 
