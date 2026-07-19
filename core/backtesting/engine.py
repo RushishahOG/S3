@@ -461,6 +461,17 @@ def _asof_market_features(market_features: pd.DataFrame, tickers: list[str], dat
     """
     if market_features is None or market_features.empty:
         return pd.DataFrame(index=pd.Index(tickers, name="ticker"))
+    # Defensive: the point-in-time snapshot requires a "ticker" key column. If the
+    # stored feature panel is missing it (e.g. a partially-regenerated / legacy
+    # feature store), degrade to an empty snapshot instead of raising
+    # KeyError('ticker') inside the rebalance loop (which would crash the run).
+    if "ticker" not in market_features.columns or "date" not in market_features.columns:
+        logger.warning(
+            "market_features missing required 'ticker'/'date' columns "
+            "(found: %s); point-in-time market factors unavailable for this run.",
+            list(market_features.columns),
+        )
+        return pd.DataFrame(index=pd.Index(tickers, name="ticker"))
     mf = market_features[market_features["date"] <= pd.Timestamp(date)]
     mf = mf[mf["ticker"].isin(tickers)]
     if mf.empty:
@@ -483,6 +494,13 @@ def _asof_quality_features(quality_ts: pd.DataFrame, tickers: list[str], date: p
     available as-of ``date`` get NaN and are excluded by the quality gate.
     """
     if quality_ts is None or quality_ts.empty:
+        return pd.DataFrame(index=pd.Index(tickers, name="ticker"))
+    if "ticker" not in quality_ts.columns or "financial_year" not in quality_ts.columns:
+        logger.warning(
+            "quality_ts missing required 'ticker'/'financial_year' columns "
+            "(found: %s); point-in-time quality factors unavailable for this run.",
+            list(quality_ts.columns),
+        )
         return pd.DataFrame(index=pd.Index(tickers, name="ticker"))
     q = quality_ts.copy()
     q["available_from"] = pd.to_datetime(q["financial_year"].astype("int64").astype("str") + "-09-30") + pd.DateOffset(years=1)

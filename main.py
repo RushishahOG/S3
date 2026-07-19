@@ -11,12 +11,12 @@ import streamlit as st
 
 from app.components.sidebar import render_sidebar
 from app.pages import (
-    backtesting,
     dashboard,
     data_extractor,
     dataset_explorer,
     feature_engineering,
     mongo_cloud,
+    backtesting,
 )
 from core.utils.logging_config import configure_logging
 

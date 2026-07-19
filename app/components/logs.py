@@ -90,23 +90,28 @@ def render_log_viewer() -> None:
     render_log_panel()
 
 
-def render_log_panel() -> None:
+def render_log_panel(key_prefix: str = "logs") -> None:
     """Render the embeddable Developer Logs panel used inside other pages.
 
     A toggle ("Enable logs") controls visibility; when enabled the live,
     filterable log viewer is shown inline within the host page.
+
+    Args:
+        key_prefix: Unique prefix for widget keys to avoid conflicts when
+            embedding multiple log panels on the same page.
     """
-    if "logs_enabled" not in st.session_state:
-        st.session_state["logs_enabled"] = False
+    enabled_key = f"{key_prefix}_enabled"
+    if enabled_key not in st.session_state:
+        st.session_state[enabled_key] = False
 
     col_toggle = st.columns([1, 4])
     with col_toggle[0]:
-        if st.toggle("Enable logs", value=st.session_state["logs_enabled"], key="logs_toggle"):
-            st.session_state["logs_enabled"] = True
+        if st.toggle("Enable logs", value=st.session_state[enabled_key], key=f"{key_prefix}_toggle"):
+            st.session_state[enabled_key] = True
         else:
-            st.session_state["logs_enabled"] = False
+            st.session_state[enabled_key] = False
 
-    if not st.session_state["logs_enabled"]:
+    if not st.session_state[enabled_key]:
         return
 
     # --- Filters & Controls (read before loading so limits apply) ----------
@@ -115,21 +120,21 @@ def render_log_panel() -> None:
     section("Filters & Controls")
     col_ctrl = st.columns([1, 1])
     with col_ctrl[0]:
-        levels = st.multiselect("Log Level", ALL_LEVELS, default=ALL_LEVELS, key="logs_levels")
+        levels = st.multiselect("Log Level", ALL_LEVELS, default=ALL_LEVELS, key=f"{key_prefix}_levels")
     with col_ctrl[1]:
-        max_lines = st.slider("Max lines loaded", 200, 20000, 3000, step=200, key="logs_max")
+        max_lines = st.slider("Max lines loaded", 200, 20000, 3000, step=200, key=f"{key_prefix}_max")
 
     col_ctrl2 = st.columns([1, 1, 1])
     with col_ctrl2[0]:
-        keyword = st.text_input("Keyword search", "", key="logs_keyword")
+        keyword = st.text_input("Keyword search", "", key=f"{key_prefix}_keyword")
     with col_ctrl2[1]:
-        auto_refresh = st.checkbox("Auto-refresh", value=False, key="logs_auto")
+        auto_refresh = st.checkbox("Auto-refresh", value=False, key=f"{key_prefix}_auto")
         refresh_interval = st.number_input(
-            "Refresh interval (s)", min_value=1, max_value=30, value=3, key="logs_interval"
+            "Refresh interval (s)", min_value=1, max_value=30, value=3, key=f"{key_prefix}_interval"
         ) if auto_refresh else 3
     with col_ctrl2[2]:
-        d_from = st.date_input("From date", value=None, key="logs_from")
-        d_to = st.date_input("To date", value=None, key="logs_to")
+        d_from = st.date_input("From date", value=None, key=f"{key_prefix}_from")
+        d_to = st.date_input("To date", value=None, key=f"{key_prefix}_to")
 
     # --- File metadata -----------------------------------------------------
     section("Log File")
@@ -151,17 +156,17 @@ def render_log_panel() -> None:
         c3.markdown(f"**Modified**\n{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mtime))}")
         c4.metric("Entries", len(entries_all))
 
-    modules = st.multiselect("Module", module_options, default=[], key="logs_modules")
+    modules = st.multiselect("Module", module_options, default=[], key=f"{key_prefix}_modules")
 
     # --- Buttons -----------------------------------------------------------
     b1, b2, b3, b4 = st.columns(4)
     with b1:
-        if st.button("Refresh Logs", type="primary", key="logs_refresh"):
-            st.session_state["logs_cleared"] = False
+        if st.button("Refresh Logs", type="primary", key=f"{key_prefix}_refresh"):
+            st.session_state[f"{key_prefix}_cleared"] = False
             st.rerun()
     with b2:
-        if st.button("Clear View", key="logs_clear"):
-            st.session_state["logs_cleared"] = True
+        if st.button("Clear View", key=f"{key_prefix}_clear"):
+            st.session_state[f"{key_prefix}_cleared"] = True
             st.rerun()
     with b3:
         if exists:
@@ -171,13 +176,13 @@ def render_log_panel() -> None:
                     data=fh.read(),
                     file_name="platform_logs.txt",
                     mime="text/plain",
-                    key="logs_download",
+                    key=f"{key_prefix}_download",
                 )
     with b4:
-        if st.button("Copy path", key="logs_path"):
+        if st.button("Copy path", key=f"{key_prefix}_path"):
             st.code(LOG_PATH)
 
-    if st.session_state.get("logs_cleared"):
+    if st.session_state.get(f"{key_prefix}_cleared"):
         st.info("Log view cleared (the file is unchanged). Click **Refresh Logs** to reload.")
         return
 

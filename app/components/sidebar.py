@@ -15,7 +15,7 @@ PAGES = [
     ("data_extractor", "Data Extractor", "Download / update market & fundamental data"),
     ("dataset_explorer", "Dataset Explorer", "Inspect & validate stored data"),
     ("feature_engineering", "Feature Engineering", "Generate / regenerate engineered features"),
-    ("backtesting", "ARQM Backtest", "Strategy simulation & backtesting engine"),
+    ("backtesting", "ARQM Backtest & Research", "Strategy simulation, queue, results & research lab"),
     ("mongo_cloud", "Mongo Cloud Controls", "Manage the DuckDB store in MongoDB GridFS"),
 ]
 
