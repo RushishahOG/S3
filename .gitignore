@@ -43,4 +43,4 @@ Thumbs.db
 *.log
 
 # Temp files
-_*.py
+_temp_*.py
