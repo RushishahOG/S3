@@ -24,12 +24,6 @@ _um: UniverseManager | None = None
 def get_storage() -> StorageManager:
     global _storage
     if _storage is None:
-        # On hosts without the ~775MB .duckdb file (e.g. Streamlit Cloud), pull
-        # it from MongoDB GridFS to local disk first. No-op locally where the
-        # file already exists.
-        from core.data.storage.provisioning import ensure_database
-
-        ensure_database()
         # The live app is read-only; ingestion/upserts run via separate scripts.
         # A read-only connection lets the backtest worker open its own concurrent
         # read connection without blocking on the app's file lock.

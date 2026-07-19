@@ -8,6 +8,7 @@ import streamlit as st
 from app.services import get_storage
 from core.config.settings import settings
 from core.data.providers.registry import available_providers
+from core.data.storage.provisioning import ensure_database, local_status, is_configured
 
 PAGES = [
     ("dashboard", "Dashboard", "Project overview, storage & system diagnostics"),
@@ -33,6 +34,7 @@ def render_sidebar() -> str:
         )
 
         st.divider()
+        _render_db_status()
         _render_status()
 
     st.divider()
@@ -40,6 +42,31 @@ def render_sidebar() -> str:
     st.caption("Benchmark: " + settings.universe.benchmark)
 
     return choice
+
+
+def _render_db_status() -> None:
+    st.markdown("**Database Status**")
+    local = local_status()
+    configured = is_configured()
+
+    if local["exists"]:
+        st.success(f"Local DB: {local['size_mb']:.0f} MB")
+        st.caption(local["path"])
+    else:
+        st.warning("Local DB: Not downloaded")
+        if configured:
+            if st.button("📥 Download from MongoDB", key="sidebar_db_download"):
+                with st.spinner("Downloading ~775 MB from MongoDB GridFS..."):
+                    try:
+                        ensure_database()
+                        st.success("Download complete! Reloading...")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Download failed: {exc}")
+        else:
+            st.caption("Set MONGO_URI in secrets to enable download")
+
+    st.divider()
 
 
 def _render_status() -> None:
