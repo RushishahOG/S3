@@ -19,6 +19,10 @@ without touching this page's architecture.
 
 from __future__ import annotations
 
+import json
+import os
+import threading
+import time
 from typing import Any
 
 import streamlit as st
@@ -26,14 +30,12 @@ import streamlit as st
 from app.layouts.base import section
 from app.pages.backtest.state import get_backtest_state
 from core.config.backtest_schema import BacktestParameters
-from core.optimization import (
-    OptimizableParameter,
-    ParamType,
-    SearchSpaceEstimate,
-    discover_parameters,
-    estimate_search_space,
-    group_by_category,
-)
+from core.optimization import estimate_search_space
+from core.optimization.engine import run_optimization
+from core.optimization.objectives import DEFAULT_OBJECTIVE, OBJECTIVES, available_objectives
+from core.optimization.results import OptimizationRun
+from core.optimization.search_space import SearchSpaceEstimate
+from core.optimization.spec import get_spec, get_specs
 
 
 # --- Section 1 --------------------------------------------------------------
@@ -132,45 +134,61 @@ def _render_base_strategy_selection() -> BacktestParameters | None:
 
 
 # --- Section 3 --------------------------------------------------------------
-def _render_parameter_selection(parameters: list[OptimizableParameter]) -> dict[str, dict[str, Any]]:
+def _current_value_from_base(base, block: str, field: str, fallback):
+    """Resolve a parameter's live current value from the base configuration."""
+    if base is None:
+        return fallback
+    try:
+        return getattr(getattr(base, block), field, fallback)
+    except Exception:
+        return fallback
+
+
+def _render_parameter_selection(base_params) -> dict[str, dict[str, Any]]:
     section("3. Parameter Selection")
     st.markdown("Enable optimization for any parameter below. The search space is built "
                 "from your selections. Parameters are discovered automatically from the "
-                "base strategy and require no hardcoding.")
+                "optimization engine's registered metadata and require no hardcoding.")
 
-    groups = group_by_category(parameters)
+    from core.optimization.spec import get_specs
+    specs = get_specs()
+    groups: dict[str, list] = {}
+    for s in specs:
+        groups.setdefault(s.category, []).append(s)
+
     selections: dict[str, dict[str, Any]] = {}
 
     for category, params in groups.items():
         with st.expander(f"{category}", expanded=True):
-            for p in params:
-                key_enable = f"po_en_{p.key}"
-                enabled = st.checkbox(f"**{p.name}**", value=False, key=key_enable)
+            for s in params:
+                cur = _current_value_from_base(base_params, s.block, s.field, s.current)
+                key_enable = f"po_en_{s.key}"
+                enabled = st.checkbox(f"**{s.name}**", value=False, key=key_enable)
 
                 col_cur, col_min, col_max, col_step, col_type = st.columns([2, 2, 2, 2, 2])
                 with col_cur:
-                    st.text_input("Current Value", value=_fmt(p.current_value),
-                                  key=f"po_cur_{p.key}", disabled=True)
+                    st.text_input("Current Value", value=_fmt(cur),
+                                  key=f"po_cur_{s.key}", disabled=True)
+                numeric = s.kind.value in ("continuous", "discrete")
                 with col_min:
-                    min_val = st.number_input("Minimum", value=_coerce(p, p.min_value, "min"),
-                                              key=f"po_min_{p.key}",
-                                              disabled=not enabled,
-                                              format=_fmt_format(p))
+                    min_val = st.number_input("Minimum", value=_coerce_num(s, s.min, "min", cur),
+                                              key=f"po_min_{s.key}", disabled=not enabled,
+                                              format="%g")
                 with col_max:
-                    max_val = st.number_input("Maximum", value=_coerce(p, p.max_value, "max"),
-                                              key=f"po_max_{p.key}",
-                                              disabled=not enabled,
-                                              format=_fmt_format(p))
+                    max_val = st.number_input("Maximum", value=_coerce_num(s, s.max, "max", cur),
+                                              key=f"po_max_{s.key}", disabled=not enabled,
+                                              format="%g")
                 with col_step:
-                    step_val = st.number_input("Step Size", value=_coerce(p, p.step, "step"),
-                                               key=f"po_step_{p.key}",
-                                               disabled=not enabled,
-                                               format=_fmt_format(p))
+                    step_val = st.number_input("Step Size", value=_coerce_num(s, s.step, "step", cur),
+                                               key=f"po_step_{s.key}", disabled=not enabled,
+                                               format="%g")
                 with col_type:
-                    st.text_input("Parameter Type", value=p.param_type.value,
-                                  key=f"po_type_{p.key}", disabled=True)
-                if p.validation.help:
-                    st.caption(p.validation.help)
+                    st.text_input("Parameter Type", value=s.kind.value,
+                                  key=f"po_type_{s.key}", disabled=True)
+                if s.kind.value == "categorical" and s.allowed:
+                    st.caption("Allowed values: " + ", ".join(str(a) for a in s.allowed))
+                if s.help:
+                    st.caption(s.help)
 
                 if enabled:
                     entry: dict[str, Any] = {
@@ -179,9 +197,9 @@ def _render_parameter_selection(parameters: list[OptimizableParameter]) -> dict[
                         "max": max_val,
                         "step": step_val,
                     }
-                    if p.param_type == ParamType.CHOICE and p.choices:
-                        entry["choices"] = list(p.choices)
-                    selections[p.key] = entry
+                    if s.kind.value == "categorical" and s.allowed:
+                        entry["choices"] = list(s.allowed)
+                    selections[s.key] = entry
                 st.divider()
 
     st.divider()
@@ -204,39 +222,33 @@ def _fmt_large(n: int) -> str:
     return f"{n:,}"
 
 
-def _fmt_format(p: OptimizableParameter) -> str:
-    return "%g" if p.param_type in (ParamType.FLOAT, ParamType.INT) else None  # type: ignore[return-value]
-
-
-def _coerce(p: OptimizableParameter, v: Any, which: str) -> Any:
-    # Choice / bool parameters have no meaningful numeric min/max/step.
-    if p.param_type in (ParamType.CHOICE, ParamType.BOOL):
-        return 0 if v is None else v
-    if v is None:
-        cur = float(p.current_value)
-        if which == "min":
-            return cur - 1.0
-        if which == "max":
-            return cur + 1.0
-        if which == "step":
-            return 0.1
-    if p.param_type == ParamType.FLOAT and v is not None:
+def _coerce_num(s, v: Any, which: str, cur) -> float:
+    """Coerce a min/max/step default for a numeric spec."""
+    if s.kind.value not in ("continuous", "discrete") or v is None:
+        return float(v) if v is not None else 0.0
+    if which == "step":
         return float(v)
-    if p.param_type == ParamType.INT and v is not None:
-        return int(v)
-    return v
+    # For min/max, if absent, derive from the current value.
+    try:
+        c = float(cur)
+    except (TypeError, ValueError):
+        c = 0.0
+    if which == "min":
+        return float(v) if v is not None else (c - 1.0)
+    if which == "max":
+        return float(v) if v is not None else (c + 1.0)
+    return float(v)
 
 
 # --- Section 4 --------------------------------------------------------------
 def _render_search_space_summary(
-    parameters: list[OptimizableParameter],
     selections: dict[str, dict[str, Any]],
     algorithm: str,
     max_iterations: int,
 ) -> SearchSpaceEstimate:
     section("4. Search Space Summary")
-    selected = [p for p in parameters if p.key in selections]
-    estimate = estimate_search_space(algorithm, selected, max_iterations=max_iterations)
+    selected_specs = [s for s in get_specs() if s.key in selections]
+    estimate = estimate_search_space(algorithm, selected_specs, selections=selections, max_iterations=max_iterations)
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Optimized Parameters", estimate.parameter_count)
@@ -245,8 +257,8 @@ def _render_search_space_summary(
     c4.metric("Est. Runtime", estimate.estimated_runtime_label)
     c5.metric("Active Algorithm", algorithm.replace("_", " ").title())
 
-    if selected:
-        st.markdown("**Optimized Parameters:** " + ", ".join(p.name for p in selected))
+    if selected_specs:
+        st.markdown("**Optimized Parameters:** " + ", ".join(s.name for s in selected_specs))
     else:
         st.info("No parameters selected yet. Enable parameters in Section 3 to build the search space.")
     st.divider()
@@ -254,16 +266,9 @@ def _render_search_space_summary(
 
 
 # --- Section 5 --------------------------------------------------------------
-_SINGLE_OBJECTIVES = [
-    "Maximum CAGR",
-    "Maximum Sharpe Ratio",
-    "Maximum Sortino Ratio",
-    "Maximum Calmar Ratio",
-    "Minimum Maximum Drawdown",
-    "Maximum Final Portfolio Value",
-    "Minimum Portfolio Volatility",
-    "Maximum Information Ratio",
-]
+# Map UI objective labels -> engine objective keys.
+_OBJECTIVE_LABELS = {obj.label: obj.key for obj in available_objectives()}
+_OBJECTIVE_ORDER = [obj.label for obj in available_objectives()]
 
 
 def _render_objective() -> dict[str, Any]:
@@ -273,19 +278,22 @@ def _render_objective() -> dict[str, Any]:
         options=["Single Objective", "Target-Based", "Multi-Objective"],
         key="po_obj_mode",
         horizontal=True,
-        help="Mode 3 (Multi-Objective) builds the UI only; ranking is future work.",
+        help="The first implementation evaluates a single objective. "
+             "Target-Based and Multi-Objective define the UI; ranking uses the "
+             "single-objective engine for now.",
     )
 
     result: dict[str, Any] = {"mode": mode}
 
     if mode == "Single Objective":
-        obj = st.selectbox("Objective Metric", _SINGLE_OBJECTIVES, key="po_single_obj")
-        result["objective"] = obj
+        idx = _OBJECTIVE_ORDER.index(OBJECTIVES[DEFAULT_OBJECTIVE].label)
+        obj_label = st.selectbox("Objective Metric", _OBJECTIVE_ORDER, index=idx, key="po_single_obj")
+        result["objective"] = _OBJECTIVE_LABELS[obj_label]
+        result["objective_label"] = obj_label
 
     elif mode == "Target-Based":
         st.markdown("Specify desired target values. Every field is optional — "
-                    "leave a field blank to ignore it. The engine ranks candidates "
-                    "by proximity to the provided targets.")
+                    "leave a field blank to ignore it.")
         st.info("Example — Conservative: Expected CAGR ≥ 18%, Max Drawdown ≤ 10%, "
                 "Max Volatility ≤ 14%.\n\nExample — Balanced: Expected CAGR ≥ 22%, "
                 "Sharpe ≥ 1.50, Max Drawdown ≤ 15%.")
@@ -301,15 +309,16 @@ def _render_objective() -> dict[str, Any]:
             targets["max_drawdown"] = st.number_input("Maximum Acceptable Drawdown (%)", key="po_t_mdd", value=0.0, step=0.5)
             targets["max_volatility"] = st.number_input("Maximum Acceptable Volatility (%)", key="po_t_vol", value=0.0, step=0.5)
             targets["min_information_ratio"] = st.number_input("Minimum Information Ratio", key="po_t_ir", value=0.0, step=0.1)
-        # Drop zero-valued (left blank) targets.
         targets = {k: v for k, v in targets.items() if v != 0.0}
         result["targets"] = targets
+        result["objective"] = DEFAULT_OBJECTIVE
+        result["objective_label"] = OBJECTIVES[DEFAULT_OBJECTIVE].label
         if not targets:
             st.caption("No targets specified — all candidates will be considered equally valid.")
 
     else:  # Multi-Objective
         st.markdown("Select the metrics to optimize simultaneously. The engine will "
-                    "later produce a Pareto-optimal solution set (UI scaffold only).")
+                    "later produce a Pareto-optimal solution set (UI scaffold).")
         metrics = ["CAGR", "Sharpe", "Sortino", "Calmar", "Drawdown", "Volatility", "Information Ratio"]
         chosen = []
         cols = st.columns(len(metrics))
@@ -317,6 +326,8 @@ def _render_objective() -> dict[str, Any]:
             if cols[i].checkbox(m, key=f"po_mo_{i}", value=(i < 3)):
                 chosen.append(m)
         result["metrics"] = chosen
+        result["objective"] = DEFAULT_OBJECTIVE
+        result["objective_label"] = OBJECTIVES[DEFAULT_OBJECTIVE].label
         if not chosen:
             st.warning("Select at least one metric for multi-objective optimization.")
 
@@ -362,24 +373,25 @@ def _render_constraints() -> dict[str, Any]:
 
 
 # --- Section 7 --------------------------------------------------------------
-_ALGORITHMS = [
-    "Grid Search",
-    "Random Search",
-    "Bayesian Optimization",
-    "Genetic Algorithm",
-    "Particle Swarm Optimization",
-    "Simulated Annealing",
-]
-_ALGO_TO_KEY = {a: a.lower().replace(" ", "_") for a in _ALGORITHMS}
+# Algorithms implemented in the engine. The architecture allows adding Bayesian,
+# Differential Evolution, Genetic Algorithm, PSO and Simulated Annealing later
+# without changing the engine (see core/optimization/algorithms.py).
+_ALGORITHM_CHOICES = {
+    "Grid Search": "grid_search",
+    "Random Search": "random_search",
+    "SLSQP": "slsqp",
+}
 
 
 def _render_algorithm() -> str:
     section("7. Optimization Algorithm")
-    st.markdown("Select the search algorithm. Algorithm implementations will be added later.")
-    chosen = st.selectbox("Algorithm", _ALGORITHMS, key="po_algorithm", index=0)
-    st.caption("Interface only — no optimization executes in the current scope.")
+    st.markdown("Select the search algorithm. Grid Search, Random Search and SLSQP "
+                "are implemented; the strategy pattern allows adding more (Bayesian, "
+                "Genetic Algorithm, PSO, Simulated Annealing) without engine changes.")
+    chosen = st.selectbox("Algorithm", list(_ALGORITHM_CHOICES.keys()),
+                          key="po_algorithm", index=1)  # default: Random Search
     st.divider()
-    return _ALGO_TO_KEY[chosen]
+    return _ALGORITHM_CHOICES[chosen]
 
 
 # --- Section 8 --------------------------------------------------------------
@@ -387,24 +399,22 @@ def _render_execution_config() -> dict[str, Any]:
     section("8. Execution Configuration")
     c1, c2, c3 = st.columns(3)
     with c1:
-        max_iter = st.number_input("Maximum Iterations", key="po_ex_iter", value=200, step=50, min_value=1)
+        max_iter = st.number_input("Maximum Iterations", key="po_ex_iter", value=10, step=5, min_value=1)
         max_runtime = st.number_input("Maximum Runtime (min)", key="po_ex_rt", value=60, step=10, min_value=1)
     with c2:
-        workers = st.number_input("Parallel Workers", key="po_ex_workers", value=1, step=1, min_value=1)
+        top_n = st.number_input("Top N Strategies", key="po_ex_topn", value=20, step=5, min_value=1)
         seed = st.number_input("Random Seed", key="po_ex_seed", value=42, step=1)
     with c3:
-        early_stop = st.checkbox("Early Stopping", key="po_ex_early", value=False)
-        save_inter = st.checkbox("Save Intermediate Results", key="po_ex_save", value=True)
-        checkpoint = st.number_input("Checkpoint Frequency", key="po_ex_cp", value=10, step=5, min_value=1)
+        workers = st.number_input("Parallel Workers", key="po_ex_workers", value=1, step=1, min_value=1)
+        save_inter = st.checkbox("Save Results to Disk", key="po_ex_save", value=True)
 
     config = {
         "max_iterations": int(max_iter),
         "max_runtime_min": int(max_runtime),
+        "top_n": int(top_n),
         "parallel_workers": int(workers),
         "random_seed": int(seed),
-        "early_stopping": early_stop,
         "save_intermediate": save_inter,
-        "checkpoint_frequency": int(checkpoint),
     }
     st.divider()
     return config
@@ -413,7 +423,6 @@ def _render_execution_config() -> dict[str, Any]:
 # --- Section 9 --------------------------------------------------------------
 def _render_summary(
     base_label: str,
-    parameters: list[OptimizableParameter],
     selections: dict[str, dict[str, Any]],
     objective: dict[str, Any],
     algorithm: str,
@@ -422,13 +431,13 @@ def _render_summary(
     estimate: SearchSpaceEstimate,
 ) -> None:
     section("9. Optimization Summary")
-    selected = [p for p in parameters if p.key in selections]
+    selected_specs = [s for s in get_specs() if s.key in selections]
 
-    obj_label = objective.get("objective") or objective.get("mode")
+    obj_label = objective.get("objective_label") or objective.get("objective") or objective.get("mode")
     if objective.get("mode") == "Target-Based":
-        obj_label = "Target-Based (" + ", ".join(objective.get("targets", {}).keys()) + ")"
+        obj_label = "Target-Based (engine uses " + OBJECTIVES[DEFAULT_OBJECTIVE].label + ")"
     elif objective.get("mode") == "Multi-Objective":
-        obj_label = "Multi-Objective (" + ", ".join(objective.get("metrics", [])) + ")"
+        obj_label = "Multi-Objective (engine uses " + OBJECTIVES[DEFAULT_OBJECTIVE].label + ")"
 
     col1, col2 = st.columns(2)
     with col1:
@@ -442,8 +451,8 @@ def _render_summary(
         st.markdown(f"**Estimated Runtime:** {estimate.estimated_runtime_label}")
         st.markdown(f"**Constraints:** {len(constraints)} defined")
 
-    if selected:
-        st.markdown("**Selected Parameters:** " + ", ".join(p.name for p in selected))
+    if selected_specs:
+        st.markdown("**Selected Parameters:** " + ", ".join(s.name for s in selected_specs))
     if constraints:
         st.markdown("**Active Constraints:** " + ", ".join(constraints.keys()))
     st.divider()
@@ -458,21 +467,96 @@ def _validate(
     errors: list[str] = []
     if not selections:
         errors.append("Select at least one parameter to optimize (Section 3).")
-
     for key, sel in selections.items():
         if sel.get("min") is not None and sel.get("max") is not None and sel["min"] > sel["max"]:
             errors.append(f"{key}: Minimum exceeds Maximum.")
         if sel.get("step") is not None and sel["step"] <= 0:
             errors.append(f"{key}: Step size must be positive.")
-
-    if objective.get("mode") == "Single Objective" and not objective.get("objective"):
-        errors.append("Select a single-objective metric (Section 5).")
     if objective.get("mode") == "Multi-Objective" and not objective.get("metrics"):
         errors.append("Select at least one metric for multi-objective optimization (Section 5).")
     return errors
 
 
+# --- Execution orchestration (background thread + progress store) ------------
+_PO_PROGRESS: dict[str, dict] = {}
+_PO_LOCK = threading.Lock()
+
+
+def _persist_run(run: OptimizationRun) -> str | None:
+    try:
+        from core.utils.paths import PROJECT_ROOT
+        out_dir = os.path.join(PROJECT_ROOT, "storage", "optimization_runs")
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, f"opt_run_{run.run_id}.json")
+        run.save(path)
+        return path
+    except Exception:
+        return None
+
+
+def _launch_optimization(
+    base_params: BacktestParameters,
+    selected_keys: list[str],
+    objective_key: str,
+    algorithm_key: str,
+    constraints: dict[str, Any],
+    exec_config: dict[str, Any],
+) -> str:
+    """Launch the optimization in a background thread; return run_id."""
+    from app.services import get_storage
+    run_id = f"po_{int(time.time()*1000)}"
+    with _PO_LOCK:
+        _PO_PROGRESS[run_id] = {
+            "running": True, "iteration": 0, "n_total": 0, "n_valid": 0,
+            "best_score": None, "last_event": "", "done": False, "error": None,
+        }
+
+    def _progress(ev: dict) -> None:
+        with _PO_LOCK:
+            bucket = _PO_PROGRESS.get(run_id)
+            if bucket is None:
+                return
+            bucket["last_event"] = ev.get("event", "")
+            if ev.get("event") == "candidate_done":
+                bucket["iteration"] = ev.get("iteration", 0)
+            elif ev.get("event") == "done":
+                bucket["done"] = True
+                bucket["running"] = False
+                bucket["n_valid"] = ev.get("n_valid", 0)
+                bucket["n_total"] = ev.get("n_total", 0)
+                bucket["best_score"] = ev.get("best_score")
+                bucket["runtime"] = ev.get("runtime")
+
+    def _worker() -> None:
+        try:
+            run = run_optimization(
+                base=base_params,
+                selected_keys=selected_keys,
+                objective_key=objective_key,
+                algorithm_key=algorithm_key,
+                constraints=constraints,
+                max_iterations=exec_config["max_iterations"],
+                random_seed=exec_config["random_seed"],
+                storage_factory=get_storage,
+                max_runtime_seconds=exec_config["max_runtime_min"] * 60.0,
+                top_n=exec_config["top_n"],
+                progress_callback=_progress,
+            )
+            with _PO_LOCK:
+                _PO_PROGRESS[run_id]["run"] = run
+                if exec_config.get("save_intermediate"):
+                    _persist_run(run)
+        except Exception as exc:
+            import traceback as _tb
+            with _PO_LOCK:
+                _PO_PROGRESS[run_id]["error"] = f"{type(exc).__name__}: {exc}\n{_tb.format_exc()}"
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return run_id
+
+
 def _render_run(
+    base_params: BacktestParameters,
     selections: dict[str, dict[str, Any]],
     objective: dict[str, Any],
     constraints: dict[str, Any],
@@ -482,24 +566,178 @@ def _render_run(
     section("10. Run Parameter Optimization")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        if st.button("Run Parameter Optimization", type="primary", use_container_width=True):
+        if st.button("Run Parameter Optimization", type="primary", use_container_width=True, key="po_run"):
             errors = _validate(selections, objective, constraints)
             if errors:
                 for e in errors:
                     st.error(e)
                 st.warning("Configuration is invalid. Resolve the issues above before running.")
             else:
-                st.success("Configuration validated successfully. "
-                           "The optimization engine is ready to execute "
-                           "(backend execution will be added in a future update).")
-                with st.expander("Validated Configuration Snapshot", expanded=False):
-                    st.json({
-                        "algorithm": algorithm,
-                        "parameters": selections,
-                        "objective": objective,
-                        "constraints": constraints,
-                        "execution": exec_config,
-                    })
+                selected_keys = list(selections.keys())
+                run_id = _launch_optimization(
+                    base_params, selected_keys, objective["objective"],
+                    algorithm, constraints, exec_config,
+                )
+                st.session_state["po_run_id"] = run_id
+                st.rerun()
+
+    # Poll an in-flight run.
+    run_id = st.session_state.get("po_run_id")
+    if run_id:
+        _render_run_progress(run_id)
+
+
+def _render_run_progress(run_id: str) -> None:
+    with _PO_LOCK:
+        bucket = _PO_PROGRESS.get(run_id)
+    if bucket is None:
+        return
+    if bucket.get("error"):
+        st.error("Optimization failed:\n" + bucket["error"])
+        return
+    if not bucket.get("done"):
+        st.info(f"Optimization running… iteration {bucket.get('iteration', 0)} "
+                 f"(algorithm: {st.session_state.get('po_algorithm')})")
+        st.progress(min(1.0, (bucket.get('iteration', 0) or 0) / max(1, st.session_state.get('po_ex_iter', 1))))
+        st.caption("Backtests run sequentially under the shared storage lock. "
+                   "This page auto-refreshes.")
+        time.sleep(1.5)
+        st.rerun()
+        return
+    # Done: store the run in session and render results.
+    run: OptimizationRun | None = bucket.get("run")
+    if run is None:
+        return
+    st.session_state["po_last_run"] = run
+    st.success(f"Optimization complete. {bucket.get('n_valid', 0)} valid strategy(ies) "
+               f"from {bucket.get('n_total', 0)} candidates in "
+               f"{bucket.get('runtime', 0):.1f}s.")
+    _render_results(run)
+    # Clear the active run so reruns don't re-poll.
+    with _PO_LOCK:
+        _PO_PROGRESS.pop(run_id, None)
+    st.session_state["po_run_id"] = None
+
+
+# --- Section 11: Result Inspection -----------------------------------------
+_METRIC_DISPLAY = [
+    ("cagr", "annual_return"), ("sharpe", "sharpe"), ("sortino", "sortino"),
+    ("calmar", "calmar"), ("max_drawdown", "max_drawdown"),
+    ("volatility", "annual_volatility"), ("information_ratio", "information_ratio"),
+    ("final_value", "final_portfolio_value"), ("turnover", "turnover"),
+]
+
+
+def _render_results(run: OptimizationRun) -> None:
+    section("11. Optimization Results")
+    if not run.results:
+        st.warning("No valid candidate strategies were produced. Try widening the "
+                   "search range or relaxing constraints.")
+        return
+
+    st.markdown(f"**Objective:** {OBJECTIVES.get(run.objective, OBJECTIVES[DEFAULT_OBJECTIVE]).label} "
+                f"· **Algorithm:** {run.algorithm} · **Top {len(run.results)}**")
+
+    rows = []
+    for r in run.results:
+        row = {"Rank": r.rank, "Score": round(r.objective_score, 4)}
+        for label, key in _METRIC_DISPLAY:
+            v = r.metrics.get(key)
+            row[label] = round(v, 4) if isinstance(v, (int, float)) and v == v else None
+        row["Runtime (s)"] = round(r.runtime_seconds, 1)
+        rows.append(row)
+    st.dataframe(rows, use_container_width=True)
+
+    st.markdown("### Inspect & Apply Strategy")
+    opts = {f"#{r.rank} — score {round(r.objective_score, 3)}": r for r in run.results}
+    choice = st.selectbox("Select a strategy to inspect", list(opts.keys()), key="po_inspect")
+    res = opts[choice]
+    with st.expander(f"Strategy #{res.rank} details", expanded=True):
+        st.markdown("**Parameter Values**")
+        st.json({k: (_fmt(v) if isinstance(v, float) else v) for k, v in res.params.items()})
+        st.markdown("**Backtest Metrics**")
+        st.json({k: (round(v, 5) if isinstance(v, float) else v) for k, v in res.metrics.items()})
+
+        # Build a full BacktestParameters for the best config to display
+        # allocation / factor / quality composition.
+        cfg = run.best_config() if res.rank == 1 else None
+        if cfg is not None:
+            st.markdown("**Portfolio Allocation (cap weights)**")
+            st.json({k: round(v, 4) for k, v in cfg.cap_segment.weights.items()})
+            st.markdown("**Factor Allocation (scoring weights)**")
+            st.json({k: round(v, 4) for k, v in cfg.scoring.weights.items()})
+            st.markdown("**Quality Pillar Weights**")
+            st.json({k: round(v, 4) for k, v in cfg.quality.pillar_weights.items()})
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Apply to Manual Testing", key=f"po_apply_{res.candidate_id}"):
+                _apply_to_manual_testing(run, res)
+        with c2:
+            _render_export_config(run, res)
+
+
+def _apply_to_manual_testing(run: OptimizationRun, res) -> None:
+    """Rebuild the config and save it into the backtest state as a strategy."""
+    cfg = run.best_config() if res.rank == 1 else None
+    if cfg is None:
+        # Reconstruct from base + this candidate's params.
+        try:
+            base = BacktestParameters.from_dict(run.base_config)
+            from core.optimization.candidate import build_candidate
+            from core.optimization.spec import specs_for_keys
+            specs = specs_for_keys(list(res.params.keys()))
+            cfg = build_candidate(base, res.params, specs)
+        except Exception as exc:
+            st.error(f"Could not reconstruct configuration: {exc}")
+            return
+    state = get_backtest_state()
+    name = f"Optimized_{run.algorithm}_{res.candidate_id}"
+    config = state.save_strategy(name, cfg)
+    st.success(f"Applied as '{config.name}' (ID: {config.config_id}). "
+               f"Open Manual Testing to run or inspect it.")
+    st.session_state["bt_active_section"] = "manual_testing"
+
+
+def _render_export_config(run: OptimizationRun, res) -> None:
+    """Export the candidate configuration as a downloadable JSON."""
+    export = {
+        "parameters_optimized": run.parameters_optimized,
+        "objective": run.objective,
+        "algorithm": run.algorithm,
+        "params": res.params,
+        "metrics": res.metrics,
+    }
+    st.download_button(
+        "Export Configuration (JSON)",
+        data=json.dumps(export, indent=2, default=str),
+        file_name=f"opt_config_{res.candidate_id}.json",
+        mime="application/json",
+        key=f"po_export_{res.candidate_id}",
+    )
+
+
+# --- Section 12: Persistence -------------------------------------------------
+def _render_persistence() -> None:
+    section("12. Saved Optimization Runs")
+    from core.utils.paths import PROJECT_ROOT
+    out_dir = os.path.join(PROJECT_ROOT, "storage", "optimization_runs")
+    if not os.path.isdir(out_dir):
+        st.info("No saved optimization runs yet.")
+        return
+    files = sorted([f for f in os.listdir(out_dir) if f.endswith(".json")], reverse=True)
+    if not files:
+        st.info("No saved optimization runs yet.")
+        return
+    sel = st.selectbox("Load a saved run", files, key="po_load_run")
+    if st.button("Load Run", key="po_load_btn"):
+        try:
+            run = OptimizationRun.load(os.path.join(out_dir, sel))
+            st.session_state["po_last_run"] = run
+            st.success(f"Loaded run {run.run_id} ({len(run.results)} results).")
+            _render_results(run)
+        except Exception as exc:
+            st.error(f"Failed to load run: {exc}")
 
 
 # --- Orchestration ----------------------------------------------------------
@@ -508,23 +746,29 @@ def render() -> None:
     section("Parameter Optimization")
     st.caption("Research Lab · Generic, algorithm-agnostic parameter optimization engine")
 
+    # Show a previously loaded/completed run at the top if present.
+    if st.session_state.get("po_last_run") is not None and not st.session_state.get("po_run_id"):
+        _render_results(st.session_state["po_last_run"])
+        st.divider()
+
     _render_overview()
 
     base_params = _render_base_strategy_selection()
     base_label = st.session_state.get(_BASE_STRATEGY_KEY, "None")
 
-    parameters = discover_parameters(base_params)
-    selections = _render_parameter_selection(parameters)
+    selections = _render_parameter_selection(base_params)
 
     algorithm = _render_algorithm()
     exec_config = _render_execution_config()
-    estimate = _render_search_space_summary(parameters, selections, algorithm, exec_config["max_iterations"])
+    estimate = _render_search_space_summary(selections, algorithm, exec_config["max_iterations"])
 
     objective = _render_objective()
     constraints = _render_constraints()
 
-    _render_summary(base_label, parameters, selections, objective, algorithm, constraints, exec_config, estimate)
-    _render_run(selections, objective, constraints, exec_config, algorithm)
+    _render_summary(base_label, selections, objective, algorithm, constraints, exec_config, estimate)
+    _render_run(base_params, selections, objective, constraints, exec_config, algorithm)
+
+    _render_persistence()
 
 
 if __name__ == "__main__":

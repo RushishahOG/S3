@@ -8,15 +8,20 @@ These are deliberately **estimates only** -- no backtests are executed. The
 numbers are used by the UI's *Search Space Summary* to give the user a sense of
 scale before they commit to a run. The math is intentionally simple and
 transparent so it is easy to reason about and extend.
+
+The estimator consumes the engine's :class:`~core.optimization.spec.OptimizerParamSpec`
+(meta) together with the UI's per-parameter ``selections`` (user-chosen
+min/max/step overrides) so the displayed search space reflects exactly what the
+algorithm will generate.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from math import prod
-from typing import Iterable
+from typing import Any, Iterable
 
-from core.optimization.param_registry import OptimizableParameter, ParamType
+from core.optimization.spec import OptimizerParamSpec, ParamKind
 
 
 # Rough per-backtest cost assumption used purely for runtime estimation.
@@ -48,19 +53,30 @@ class SearchSpaceEstimate:
         return f"{hours:,}h"
 
 
-def _grid_steps_for_param(param: OptimizableParameter) -> int:
+def _effective_bounds(spec: OptimizerParamSpec, sel: dict[str, Any]):
+    """Return (min, max, step, allowed) honoring the user's UI overrides."""
+    lo = sel.get("min", spec.min)
+    hi = sel.get("max", spec.max)
+    step = sel.get("step", spec.step)
+    allowed = sel.get("choices", spec.allowed)
+    return lo, hi, step, allowed
+
+
+def _grid_steps_for_param(spec: OptimizerParamSpec, sel: dict[str, Any]) -> int:
     """Number of discrete values a single parameter contributes to a grid.
 
     For numeric parameters this is derived from the (min, max, step) range,
-    falling back to a sensible default when a bound is missing. Choice and
-    boolean parameters contribute one value per option.
+    falling back to a sensible default when a bound is missing. Choice, boolean
+    and discrete-allowed parameters contribute one value per option.
     """
-    if param.param_type == ParamType.CHOICE:
-        return max(1, len(param.choices or []))
-    if param.param_type == ParamType.BOOL:
+    lo, hi, step, allowed = _effective_bounds(spec, sel)
+    if spec.kind == ParamKind.CATEGORICAL:
+        return max(1, len(allowed or []))
+    if spec.kind == ParamKind.BOOLEAN:
         return 2
+    if spec.kind == ParamKind.DISCRETE and allowed:
+        return max(1, len(allowed))
 
-    lo, hi, step = param.min_value, param.max_value, param.step
     if lo is None or hi is None:
         # No explicit bounds: treat as a modest 5-step sweep around the current value.
         return 5
@@ -69,14 +85,19 @@ def _grid_steps_for_param(param: OptimizableParameter) -> int:
     return max(1, int(round((hi - lo) / step)) + 1)
 
 
-def estimate_grid_search(parameters: Iterable[OptimizableParameter]) -> SearchSpaceEstimate:
+def estimate_grid_search(
+    specs: Iterable[OptimizerParamSpec],
+    selections: dict[str, dict[str, Any]] | None = None,
+    max_iterations: int = 200,
+) -> SearchSpaceEstimate:
     """Estimate a full Cartesian grid over the selected parameters."""
-    params = list(parameters)
-    steps = [_grid_steps_for_param(p) for p in params]
+    specs = list(specs)
+    selections = selections or {}
+    steps = [_grid_steps_for_param(s, selections.get(s.key, {})) for s in specs]
     size = prod(steps) if steps else 1
     backtests = size
     return SearchSpaceEstimate(
-        parameter_count=len(params),
+        parameter_count=len(specs),
         search_space_size=size,
         estimated_backtests=backtests,
         estimated_seconds=backtests * _SECONDS_PER_BACKTEST,
@@ -84,15 +105,18 @@ def estimate_grid_search(parameters: Iterable[OptimizableParameter]) -> SearchSp
 
 
 def estimate_random_search(
-    parameters: Iterable[OptimizableParameter], max_iterations: int = 200
+    specs: Iterable[OptimizerParamSpec],
+    selections: dict[str, dict[str, Any]] | None = None,
+    max_iterations: int = 200,
 ) -> SearchSpaceEstimate:
     """Estimate a random / sample-based search bounded by ``max_iterations``."""
-    params = list(parameters)
-    steps = [_grid_steps_for_param(p) for p in params]
+    specs = list(specs)
+    selections = selections or {}
+    steps = [_grid_steps_for_param(s, selections.get(s.key, {})) for s in specs]
     full_size = prod(steps) if steps else 1
     backtests = min(max_iterations, max(1, full_size))
     return SearchSpaceEstimate(
-        parameter_count=len(params),
+        parameter_count=len(specs),
         search_space_size=min(full_size, max_iterations),
         estimated_backtests=backtests,
         estimated_seconds=backtests * _SECONDS_PER_BACKTEST,
@@ -104,6 +128,7 @@ def estimate_random_search(
 _ALGORITHM_ESTIMATORS = {
     "grid_search": estimate_grid_search,
     "random_search": estimate_random_search,
+    "slsqp": estimate_random_search,
     "bayesian_optimization": estimate_random_search,
     "genetic_algorithm": estimate_random_search,
     "particle_swarm_optimization": estimate_random_search,
@@ -113,11 +138,10 @@ _ALGORITHM_ESTIMATORS = {
 
 def estimate_search_space(
     algorithm: str,
-    parameters: Iterable[OptimizableParameter],
+    specs: Iterable[OptimizerParamSpec],
+    selections: dict[str, dict[str, Any]] | None = None,
     max_iterations: int = 200,
 ) -> SearchSpaceEstimate:
     """Estimate the search space for a given algorithm and selected parameters."""
     estimator = _ALGORITHM_ESTIMATORS.get(algorithm, estimate_random_search)
-    if algorithm == "random_search":
-        return estimator(parameters, max_iterations=max_iterations)
-    return estimator(parameters)
+    return estimator(list(specs), selections, max_iterations=max_iterations)
