@@ -156,6 +156,22 @@ def _render_parameter_selection(base_params) -> dict[str, dict[str, Any]]:
     for s in specs:
         groups.setdefault(s.category, []).append(s)
 
+    # Select-all / Clear-all controls for the whole parameter table.
+    c_all, c_none, c_info = st.columns([1, 1, 4])
+    with c_all:
+        if st.button("Select All", key="po_sel_all", use_container_width=True):
+            for s in specs:
+                st.session_state[f"po_en_{s.key}"] = True
+            st.rerun()
+    with c_none:
+        if st.button("Clear All", key="po_sel_none", use_container_width=True):
+            for s in specs:
+                st.session_state[f"po_en_{s.key}"] = False
+            st.rerun()
+    with c_info:
+        st.caption(f"{len(specs)} optimizable parameters discovered across "
+                   f"{len(groups)} categories.")
+
     selections: dict[str, dict[str, Any]] = {}
 
     for category, params in groups.items():
