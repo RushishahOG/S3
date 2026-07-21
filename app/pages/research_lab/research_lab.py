@@ -13,12 +13,8 @@ from app.pages.research_lab import (
     parameter_optimization,
     monte_carlo,
     efficient_frontier,
-    pareto_frontier,
-    walk_forward,
-    stress_testing,
     sensitivity_analysis,
     strategy_comparison,
-    strategy_explorer,
 )
 
 
@@ -26,12 +22,8 @@ RESEARCH_TABS = [
     ("parameter_optimization", "Parameter Optimization", parameter_optimization),
     ("monte_carlo", "Monte Carlo Simulation", monte_carlo),
     ("efficient_frontier", "Efficient Frontier", efficient_frontier),
-    ("pareto_frontier", "Pareto Frontier", pareto_frontier),
-    ("walk_forward", "Walk-Forward Validation", walk_forward),
-    ("stress_testing", "Stress Testing", stress_testing),
     ("sensitivity_analysis", "Sensitivity Analysis", sensitivity_analysis),
     ("strategy_comparison", "Strategy Comparison", strategy_comparison),
-    ("strategy_explorer", "Strategy Explorer", strategy_explorer),
 ]
 
 

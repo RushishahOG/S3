@@ -72,6 +72,7 @@ def run_backtest(
     params: BacktestParameters,
     storage: StorageManager,
     progress_callback: Callable[[dict], None] | None = None,
+    data: "BacktestData | None" = None,
 ) -> BacktestResult:
     """Run the ARQM backtest.
 
@@ -94,7 +95,8 @@ def run_backtest(
         except Exception:
             pass
 
-    data = load_backtest_data(storage, params, progress=_load_progress)
+    if data is None:
+        data = load_backtest_data(storage, params, progress=_load_progress)
     prices = data.prices
     if prices.empty or not data.universe_tickers:
         logger.warning(

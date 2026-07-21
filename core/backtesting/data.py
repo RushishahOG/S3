@@ -246,7 +246,7 @@ def _load_market_features(
     if not existing:
         return pd.DataFrame(columns=["ticker", "date", *cols])
     mf = storage.get_features(tickers, start=start, end=end, columns=existing)
-    if mf.empty:
+    if mf is None or mf.empty:
         return pd.DataFrame(columns=["ticker", "date", *existing])
     mf = mf.copy()
     mf["date"] = pd.to_datetime(mf["date"])
