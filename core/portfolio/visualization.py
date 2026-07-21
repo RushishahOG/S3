@@ -257,7 +257,7 @@ def plot_allocation_treemap(
         treemapcolorway=px.colors.qualitative.Set3,
     )
 
-    fig.update_traces(textinfo='label+percent+value')
+    fig.update_traces(textinfo='label+percent entry+value')
 
     return fig
 

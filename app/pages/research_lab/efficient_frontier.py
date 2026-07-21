@@ -6,6 +6,7 @@ optimization, and risk-return trade-off analysis using Modern Portfolio Theory.
 
 from __future__ import annotations
 
+import math
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -428,7 +429,8 @@ def _render_optimal_portfolio_tab(
         ]
         for i, (label, val, fmt) in enumerate(rows):
             with mcols[i % 3]:
-                display = fmt.format(val) if val is not None and val == val else "—"
+                is_valid = val is not None and not isinstance(val, (pd.Series, pd.DataFrame)) and not (isinstance(val, float) and math.isnan(val))
+                display = fmt.format(val) if is_valid else "—"
                 st.metric(label, display)
 
 
@@ -491,6 +493,17 @@ def _render_risk_tab(
     st.plotly_chart(fig_corr, use_container_width=True)
 
 
+def _format_val(val, fmt):
+    if val is None or isinstance(val, (pd.Series, pd.DataFrame)):
+        return "—"
+    if isinstance(val, float) and math.isnan(val):
+        return "—"
+    try:
+        return fmt.format(val)
+    except (ValueError, TypeError):
+        return "—"
+
+
 def _render_metrics_tab(
     metrics: dict,
     min_var_metrics: dict,
@@ -516,9 +529,9 @@ def _render_metrics_tab(
     for key, label, fmt in metric_names:
         rows.append({
             "Metric": label,
-            "Optimal": fmt.format(metrics.get(key, 0)) if metrics.get(key) is not None else "—",
-            "Min Vol": fmt.format(min_var_metrics.get(key, 0)) if min_var_metrics.get(key) is not None else "—",
-            "Max Sharpe": fmt.format(max_sharpe_metrics.get(key, 0)) if max_sharpe_metrics.get(key) is not None else "—",
+            "Optimal": _format_val(metrics.get(key), fmt),
+            "Min Vol": _format_val(min_var_metrics.get(key), fmt),
+            "Max Sharpe": _format_val(max_sharpe_metrics.get(key), fmt),
         })
 
     st.dataframe(

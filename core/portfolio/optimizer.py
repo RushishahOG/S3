@@ -674,7 +674,7 @@ class PortfolioOptimizer:
         )
 
     def _slsqp_optimization(self, objective_func, bounds, cons, previous_weights,
-                            opt_constraints, returns_array, cov_array, tickers) -> "OptimizationResult":
+                            opt_obj, opt_constraints, returns_array, cov_array, tickers) -> "OptimizationResult":
         """S-Lagrange multiplier optimization."""
         initial_weights = np.ones(self.n_assets) / self.n_assets
 
@@ -693,7 +693,7 @@ class PortfolioOptimizer:
 
     def _differential_evolution(
         self, objective_func, bounds, cons, previous_weights,
-        opt_constraints, returns_array, cov_array, tickers
+        opt_obj, opt_constraints, returns_array, cov_array, tickers
     ) -> "OptimizationResult":
         """Differential evolution optimization."""
         result = optimize.differential_evolution(
@@ -713,7 +713,7 @@ class PortfolioOptimizer:
 
     def _particle_swarm(
         self, objective_func, bounds, cons, previous_weights,
-        opt_constraints, returns_array, cov_array, tickers
+        opt_obj, opt_constraints, returns_array, cov_array, tickers
     ) -> "OptimizationResult":
         """Particle swarm optimization."""
         from scipy.optimize import differential_evolution
@@ -735,7 +735,7 @@ class PortfolioOptimizer:
 
     def _genetic_algorithm(
         self, objective_func, bounds, cons, previous_weights,
-        opt_constraints, returns_array, cov_array, tickers
+        opt_obj, opt_constraints, returns_array, cov_array, tickers
     ) -> "OptimizationResult":
         """Genetic algorithm optimization."""
         from scipy.optimize import differential_evolution
@@ -757,7 +757,7 @@ class PortfolioOptimizer:
 
     def _simulated_annealing(
         self, objective_func, bounds, cons, previous_weights,
-        opt_constraints, returns_array, cov_array, tickers
+        opt_obj, opt_constraints, returns_array, cov_array, tickers
     ) -> "OptimizationResult":
         """Simulated annealing optimization."""
         initial_weights = np.ones(self.n_assets) / self.n_assets
@@ -1009,7 +1009,7 @@ class EfficientFrontierAnalysis:
         port_returns = returns_history @ weights
         cum_returns = np.cumprod(1 + port_returns)
         max_dd = self._calculate_max_drawdown(None, pd.Series(cum_returns))
-        cagr = (cum_returns[-1] ** (252 / len(port_returns)) - 1) if len(port_returns) > 0 else 0
+        cagr = (cum_returns.iloc[-1] ** (252 / len(port_returns)) - 1) if len(port_returns) > 0 else 0
         return cagr / abs(max_dd) if max_dd != 0 else 0
 
     def _calculate_sortino_ratio(self, weights: np.ndarray, returns_history: pd.DataFrame) -> float:
